@@ -92,6 +92,15 @@ struct thread
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+    
+    /* Added to keep track of duration of ticks to sleep */
+    int64_t alarm;	
+    
+    //Used in priority scheduling
+    struct list grant;		
+    struct list_elem grant_elem;	
+    struct lock *wait_for_lock;
+    int starting_priority;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -137,5 +146,18 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+/*Added for computing sorted list position*/
+bool compare_alarm (const struct list_elem *a, const struct list_elem *b,
+		void *aux UNUSED);
+		
+bool compare_priority(const struct list_elem *a, const struct list_elem *b, 
+		void *aux UNUSED);
+		
+void update_priority(void);
+
+void priority_donate(void);
+
+void max_priority_test(void);
 
 #endif /* threads/thread.h */

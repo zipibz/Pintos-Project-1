@@ -20,6 +20,9 @@
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
 
+/* List keeping track of sleeping threads */
+static struct list list_sleeping_threads;
+
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
@@ -35,6 +38,7 @@ static void real_time_delay (int64_t num, int32_t denom);
 void
 timer_init (void) 
 {
+  list_init(&list_sleeping_threads); //Initialize sleeping list
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
 }
@@ -89,11 +93,21 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
-  int64_t start = timer_ticks ();
-
+  struct thread *current = thread_current();
+  
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+
+  if (ticks <= 0) return;
+  
+  enum intr_level previous_level = intr_disable();//Save the state of interrupt
+  
+  current->alarm = timer_ticks() + ticks; //Setting alarm for current thread
+ 
+  list_push_front(&list_sleeping_threads, &current->elem); //Add threads to list
+  
+  thread_block(); //Block/Sleep thread
+  intr_set_level(previous_level); //Restore interrupt to previous level
+  
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -165,6 +179,7 @@ timer_print_stats (void)
 {
   printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
+
 
 /* Timer interrupt handler. */
 static void
@@ -172,6 +187,24 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+  
+  //Sort the list of sleeping threads
+  list_sort(&list_sleeping_threads, (list_less_func *) &compare_alarm, NULL);
+  
+  //Point to the beggining of the list of sleeping threads
+  struct list_elem *e = list_begin(&list_sleeping_threads);
+  
+  //iterate the list_elem while we're not at the end of the list
+  while (e != list_end(&list_sleeping_threads))
+  {
+	  //Initialize new pointer to thread struct that owns e
+      struct thread *t = list_entry(e, struct thread, elem);      
+      if (ticks < t->alarm) break;
+      list_remove(e); //Remove from sleeping list
+      thread_unblock(t); //Wake up/Unblock thread
+      e = list_begin(&list_sleeping_threads); //Add to the list that is ready
+  }
+  max_priority_test();
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
