@@ -20,6 +20,9 @@
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
 
+//Limit for nested priority donation
+#define DEPTH_LEVEL 8
+
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
@@ -246,6 +249,7 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   list_push_back (&ready_list, &t->elem);
+  list_sort(&ready_list, (list_less_func *) &compare_priority, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -317,6 +321,7 @@ thread_yield (void)
   old_level = intr_disable ();
   if (cur != idle_thread) 
     list_push_back (&ready_list, &cur->elem);
+    list_sort(&ready_list, (list_less_func *) &compare_priority, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -343,7 +348,19 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  //thread_current ()->priority = new_priority;
+  struct thread *current = thread_current();
+  
+  enum intr_level previous_level = intr_disable();
+  int previous_priority = current->priority;
+  current->starting_priority = new_priority;
+  
+  update_priority();
+  
+  if(previous_priority < current->priority) priority_donate();
+  if(previous_priority > current->priority) max_priority_test();
+  
+  intr_set_level(previous_level);
 }
 
 /* Returns the current thread's priority. */
@@ -470,6 +487,11 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
+  
+  //For Priority Donation
+  t->starting_priority = priority;
+  t->wait_for_lock = NULL;
+  list_init(&t->grant);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -585,3 +607,69 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+bool compare_alarm(const struct list_elem *a, const struct list_elem *b,
+				void *aux UNUSED)
+{
+  //Initialize new pointer to thread struct that owns a
+  struct thread *thread_a = list_entry(a, struct thread, elem);
+  struct thread *thread_b = list_entry(b, struct thread, elem);
+ 
+  return (thread_a->alarm < thread_b->alarm);
+}
+
+bool compare_priority(const struct list_elem *a, const struct list_elem *b, 
+				void *aux UNUSED)		
+{		
+  struct thread *thread_a = list_entry(a, struct thread, elem);		
+  struct thread *thread_b = list_entry(b, struct thread, elem);	
+  	
+  return (thread_a->priority > thread_b->priority);	
+}
+
+void update_priority(void)
+{
+	struct thread *t = thread_current();
+	t->priority = t->starting_priority;
+	if (list_empty(&t->grant)) return;
+	
+	struct thread *e = list_entry(list_front(&t->grant), struct thread,
+					grant_elem);
+	if(e->priority > t->priority) t->priority = e->priority;
+}				
+	
+void priority_donate(void)
+{
+	int depth = 0;
+	struct thread *t = thread_current();
+	struct lock *l = t->wait_for_lock;
+	while(l && depth < DEPTH_LEVEL)
+	{
+		depth++;
+		if(!l->holder) return;
+		if(l->holder->priority >= t->priority) return;
+		l->holder->priority = t->priority;
+		t = l->holder;
+		l = t->wait_for_lock;
+	}
+}
+
+void max_priority_test(void)
+{
+	if(list_empty(&ready_list)) return;
+	
+	struct thread *t = list_entry(list_front(&ready_list), struct thread,
+							elem);
+	if(intr_context())
+	{
+		thread_ticks++;
+		if(thread_current()->priority < t->priority ||
+			(thread_ticks >= TIME_SLICE && 
+				thread_current()->priority == t->priority))
+		{
+			intr_yield_on_return();
+		}
+		return;
+	}
+	if(thread_current()->priority < t-> priority) thread_yield();
+}

@@ -1,0 +1,229 @@
+
+CIS 520 - Programming Project #1
+
+                   
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Ibrahim Butt	ibrahimb@ksu.edu
+Sagar Mehta		sagar5589@ksu.edu
+Dishan Nahitya	dishan@ksu.edu
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for
+>> the TA, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation,
+>> course text, lecture notes, and course staff.
+
+We reference the below repository to understand functionality and
+to grasp an outline of the algorithm.
+https://github.com/ryantimwilson/Pintos-Project-1
+
+                 ALARM CLOCK
+                 ===========
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+1) In timer.c > static struct list list_sleeping_threads;
+	Purpose: List keeping track of sleeping threads.
+
+2) In thread.h > int64_t alarm;	
+	Purpose:Alarm tracks the amount of ticks after which the current thread would have finished 		sleeping.
+	It indicates the time to be unblocked.
+
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe what happens in a call to your timer_sleep(),
+>> including the effects of the timer interrupt handler.
+
+We made code changes in the timer_sleep() and timer_interrupt() functions
+
+The algorithm is as follows:
+1) Make sure we have enough ticks to begin (ticks > 0)
+2) Save the state of the interrupt in a variable and disable interrupt temporarily.
+3) Calculate the alarm for the current thread by adding the ticks since the OS has booted
+to the ticks argument received. 
+4) Add thread to a sleeping thread list.
+5) Block/Sleep thread .
+6) Restore interrupt to previous level.
+
+In timer_interrupt():
+1) Sort the sleeping list
+2) Iterate through the list
+3) If the current threads alarm is <= the ticks accumulated by the os, the thread is 
+unblocked or woken up after being removed from the sleeping thread list.
+4) Repeat the steps above until the sleeping thread list is empty.
+
+>> A3: What steps are taken to minimize the amount of time spent in
+>> the timer interrupt handler?
+
+We sorted the list in timer_interrupt before using it so that the interrupt handler
+does not have to iterate through the entire list of sleeping threads.
+
+It would have been more efficient to sort the list in timer_sleep before accessing it
+in timer_interrupt but we were not successful at doing so.
+
+
+---- SYNCHRONIZATION ----
+
+>> A4: How are race conditions avoided when multiple threads call
+>> timer_sleep() simultaneously?
+
+We turn off interrupts in timer_sleep() when we are adding threads to the sleeping list.
+Since we don't want running threads influencing the calculation of os ticks and thread ticks.
+
+>> A5: How are race conditions avoided when a timer interrupt occurs
+>> during a call to timer_sleep()?
+
+The interrupts are off when we add threads that are ready to be woken up. 
+
+
+---- RATIONALE ----
+
+>> A6: Why did you choose this design?  In what ways is it superior to
+>> other designs that you considered?
+
+We first decided to iterate through the entire unsorted list in timer_interrupt().
+This was not very efficient and more time would be spent iterating through the list.
+So we decieded to sort the list before we iterate it after speaking with other students
+and discussing within our team.
+
+             PRIORITY SCHEDULING
+             ===================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+The thread structure was altered to account for the following variables:
+
+1) struct list grant; //List of threads waiting on a lock that the thread has.
+					//Waiting to be granted a lock.
+
+2) struct list_elem grant_elem; //List element which can be added to another
+							//threads grant list.
+
+3) struct lock *wait_for_lock; //Lock that the thread is waiting for.
+
+4) int starting_priority; //Starting priority of the thread.
+
+in thread.c
+5) #define DEPTH_LEVEL 8; //Limit for nested priority donation
+
+>> B2: Explain the data structure used to track priority donation.
+
+We use a list to track priority donation. By using a list we are able to 
+loop and acquire the priorities.
+1) We first acquire starting_priority from the current thread.
+2) We then check to see if other locks are waiting for the lock by
+accessing wait_for_lock
+3) We initialize and add to the list of thread waiting to be granted a lock
+(grant)
+4) If any threads have higher priorities than other threads in the lock, 
+they are placed on the gran_elem list_elem
+
+---- ALGORITHMS ----
+
+>> B3: How do you ensure that the highest priority thread waiting for
+>> a lock, semaphore, or condition variable wakes up first?
+
+We always re-sort the list based on thread priority everytime we repopulate
+the list.
+
+>> B4: Describe the sequence of events when a call to lock_acquire()
+>> causes a priority donation.  How is nested donation handled?
+
+When lcok_acquire() is called, the current threads wait_for_lock is updated
+to lock currently active. The current thread then gets added to the
+grant list owned by the current lock holder. We then re-sort and make 
+sure all the threads on the list are in the right order. 
+We then iteratively donate priority in the priority_donate() function.
+
+1) While lock exists and iteration depth is < 8.
+2) increment depth, if lock holder does not exist, return
+3) if the lock holder priority >= threads priority, return
+4) set the lock holders priority to threads priority
+5) set thread to lock holder
+6) set lock to the next lock the thread is watiing on 
+
+>> B5: Describe the sequence of events when lock_release() is called
+>> on a lock that a higher-priority thread is waiting for.
+
+---- SYNCHRONIZATION ----
+
+>> B6: Describe a potential race in thread_set_priority() and explain
+>> how your implementation avoids it.  Can you use a lock to avoid
+>> this race?
+
+We have turned off interrupts in thread_set_priority(). We had to do this
+to read and write to the current threads priority property. Due to this
+the interrupt cannot be used since the interrupt is unable to access locks.
+
+This could be a race condition due to a conflict between the interrupt
+trying to write to priority of the thread and the new priority being 
+updated.
+
+---- RATIONALE ----
+
+>> B7: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+
+We implemented this design after discussing with other students and within
+our team. Other implementations seemed far too complex with way too many
+new additions of variables and methods that we wanted to keep to a minimum.
+
+              ADVANCED SCHEDULER [EXTRA CREDIT]
+              =================================
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+---- ALGORITHMS ----
+
+>> C2: Suppose threads A, B, and C have nice values 0, 1, and 2.  Each
+>> has a recent_cpu value of 0.  Fill in the table below showing the
+>> scheduling decision and the priority and recent_cpu values for each
+>> thread after each given number of timer ticks:
+
+timer  recent_cpu    priority   thread
+ticks   A   B   C   A   B   C   to run
+-----  --  --  --  --  --  --   ------
+ 0
+ 4
+ 8
+12
+16
+20
+24
+28
+32
+36
+
+>> C3: Did any ambiguities in the scheduler specification make values
+>> in the table uncertain?  If so, what rule did you use to resolve
+>> them?  Does this match the behavior of your scheduler?
+
+>> C4: How is the way you divided the cost of scheduling between code
+>> inside and outside interrupt context likely to affect performance?
+
+---- RATIONALE ----
+
+>> C5: Briefly critique your design, pointing out advantages and
+>> disadvantages in your design choices.  If you were to have extra
+>> time to work on this part of the project, how might you choose to
+>> refine or improve your design?
+
